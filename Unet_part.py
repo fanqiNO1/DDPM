@@ -9,6 +9,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from bottleneck import Bottleneck
+
 
 class SiLU(nn.Module):
     def __init__(self):
@@ -40,8 +42,9 @@ class TimeEmbedding(nn.Module):
 
 
 class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, time_channels, n_groups=32):
+    def __init__(self, in_channels, out_channels, time_channels, n_groups=32, is_middle=False):
         super(ResidualBlock, self).__init__()
+        self.is_middle = is_middle
         self.norm_1 = nn.GroupNorm(n_groups, in_channels)
         self.activation_1 = SiLU()
         self.conv_1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
@@ -56,12 +59,16 @@ class ResidualBlock(nn.Module):
             self.shortcut = nn.Identity()
 
         self.time_emb = nn.Linear(time_channels, out_channels)
+        if is_middle:
+            self.bottleneck = Bottleneck(out_channels)
 
-    def forward(self, x, t):
+    def forward(self, x, t, dlatents=None):
         h = self.norm_1(x)
         h = self.activation_1(h)
         h = self.conv_1(h)
         h += self.time_emb(t)[:, :, None, None]
+        if self.is_middle:
+            h = self.bottleneck(h, dlatents)
         h = self.norm_2(h)
         h = self.activation_2(h)
         h = self.conv_2(h)
@@ -104,7 +111,7 @@ class AttentionBlock(nn.Module):
 class DownBlock(nn.Module):
     def __init__(self, in_channels, out_channels, time_channels, has_attn):
         super(DownBlock, self).__init__()
-        self.res = ResidualBlock(in_channels, out_channels, time_channels)
+        self.res = ResidualBlock(in_channels, out_channels, time_channels, is_middle=False)
         if has_attn:
             self.attn = AttentionBlock(out_channels)
         else:
@@ -119,7 +126,7 @@ class DownBlock(nn.Module):
 class UpBlock(nn.Module):
     def __init__(self, in_channels, out_channels, time_channels, has_attn):
         super(UpBlock, self).__init__()
-        self.res = ResidualBlock(in_channels + out_channels, out_channels, time_channels)
+        self.res = ResidualBlock(in_channels + out_channels, out_channels, time_channels, is_middle=False)
         if has_attn:
             self.attn = AttentionBlock(out_channels)
         else:
@@ -134,14 +141,14 @@ class UpBlock(nn.Module):
 class MiddleBlock(nn.Module):
     def __init__(self, n_channels, time_channels):
         super(MiddleBlock, self).__init__()
-        self.res_1 = ResidualBlock(n_channels, n_channels, time_channels)
+        self.res_1 = ResidualBlock(n_channels, n_channels, time_channels, is_middle=True)
         self.attn = AttentionBlock(n_channels)
-        self.res_2 = ResidualBlock(n_channels, n_channels, time_channels)
+        self.res_2 = ResidualBlock(n_channels, n_channels, time_channels, is_middle=True)
 
-    def forward(self, x, t):
-        x = self.res_1(x, t)
+    def forward(self, x, t, dlatents):
+        x = self.res_1(x, t, dlatents)
         x = self.attn(x)
-        x = self.res_2(x, t)
+        x = self.res_2(x, t, dlatents)
         return x
 
 

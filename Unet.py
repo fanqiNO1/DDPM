@@ -6,7 +6,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchinfo import summary
 
 from Unet_part import SiLU, TimeEmbedding, ResidualBlock, DownBlock, UpBlock, MiddleBlock, Downsample, Upsample
 
@@ -47,7 +46,7 @@ class Unet(nn.Module):
         self.act = SiLU()
         self.final = nn.Conv2d(in_channels, image_channels, kernel_size=3, padding=1)
 
-    def forward(self, x, t):
+    def forward(self, x, t, latent_id):
         t = self.time_emb(t)
 
         x = self.image_proj(x)
@@ -56,7 +55,7 @@ class Unet(nn.Module):
             x = down_i(x, t)
             h.append(x)
 
-        x = self.middle(x, t)
+        x = self.middle(x, t, latent_id)
         for up_i in self.up:
             if isinstance(up_i, Upsample):
                 x = up_i(x, t)
@@ -71,9 +70,11 @@ class Unet(nn.Module):
         return x
 
 if __name__ == "__main__":
+    from torchinfo import summary
     model = Unet()
     x = torch.zeros(1, 3, 224, 224)
     t = x.new_full((1,), 1)
+    latent_id = torch.zeros(1, 512)
     with open("Unet.txt", "w") as f:
-        results = str(summary(model, input_data=[x, t], device='cpu'))
+        results = str(summary(model, input_data=[x, t, latent_id], device='cpu', depth=10))
         f.write(results)
